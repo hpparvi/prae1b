@@ -1,0 +1,1 @@
+k2sc data/raw/ktwo211916756-c05_llc.fits -c  5 --splits 2344 --save-dir data/red --de-npop 50 --de-max-time 120 --logfile k2sc.log --flux-type pdc --de-niter 200 --p-mask-center 2317.89 --p-mask-period 10.134075  --p-mask-duration 0.4 
