@@ -1,5 +1,5 @@
 import math as mt
-import pyfits as pf
+import astropy.io.fits as pf
 import seaborn as sb
 import pandas as pd
 import numpy as np
@@ -17,6 +17,9 @@ from exotk.utils.orbits import as_from_rhop
 from exotk.utils.likelihood import ll_normal_es
 from exotk.utils.misc_f import utilities as uf
 from k2sc.utils import fold
+
+from exotk.constants import rsun
+from scipy.constants import G
 
 from emcee import EnsembleSampler
 cp = sb.color_palette()
@@ -36,11 +39,12 @@ zero_epoch = tc  = tc_bjd - bjdref
 period     = p   = 10.1344
 duration   = dur = 0.3
 
-from exotk.constants import rsun
-from scipy.constants import G
 G_cgs = 6.674e-8
 Rs = 0.43 * rsun
 logg, logg_e = 4.82, 0.06
+
+def T14(p,a,k,I):
+    return p/pi*arcsin( (1./a)*sqrt( ((1+k)**2 - (a*cos(I))**2) / (1-cos(I)**2)))
 
 def logg(rho, r):
     """
@@ -71,73 +75,80 @@ class HNPrior(NP):
 HP = HNPrior
             
 class LPFunction(object):
-    """A simple log posterior function class.
-    """
-    def __init__(self, time, flux, tc, p, nthreads=2, constrain_rho=0, eccentric=False):
+    def __init__(self, nthreads=2, logg_prior=None):
         self.tm = MA(lerp=False, supersampling=10, nthr=nthreads) 
         self.nthr = nthreads
-        self.eccentric = eccentric
-        
-        self.time     = time.copy()
-        self.flux_o   = flux.copy()
-        self.npt      = flux.size
-        self._wrk_lc  = zeros_like(time)  
-        self._wrk_ld  = zeros(2)        
 
-        
-        self.priors = [NP(   tc,   0.02,   'tc'), ##  0  - Transit centre
-                       NP(    p,   0.01,    'p'), ##  1  - Period
-                       UP( 0.06**2,  0.12**2,  'k2'), ##  2  - planet-star area ratio
-                       HP(  1.25,   0.45, 'rho', lims=(0.05,10)), ##  3  - Stellar density
-                       UP(     0,   0.99,   'b'), ##  4  - Impact parameter
-                       UP(  1e-4,  15e-4,   'e'), ##  5  - White noise std
-                       NP(   1.0,   0.01,   'c'), ##  6  - Baseline constant
-                       UP(     0,    1.0,  'q1'), ##  7  - limb darkening q1
-                       UP(     0,    1.0,  'q2')] ##  8  - limb darkening q2
-        if constrain_rho==1:
-            self.priors[3] = NP(4.9, 0.5, 'rho', lims=(0.05,10))
-        elif constrain_rho == 2:
-            self.priors[3] = NP(15.0, 0.5, 'rho', lims=(1.0,20))
-        elif constrain_rho >= 3:
-            self.priors[3] = UP(1.0, 25.0, 'rho')
+        ## Import the K2 data
+        ## ------------------
+        d  = pf.getdata('data/red/EPIC_211916756_mast.fits', 1)
+        time = d.time
+        flux_raw = d.flux_1
+        trend_t  = d.trend_t_1 - np.nanmedian(d.trend_t_1)
+        trend_p  = d.trend_p_1 - np.nanmedian(d.trend_p_1)
+        flux = flux_raw - trend_t - trend_p
+        flux /= np.nanmedian(flux)
 
-        self.logg_prior = NP(4.82, 0.06, lims=(4,6))
-        if constrain_rho == 4:
-            self.logg_prior = NP(4.5, 0.5, lims=(1,8))
-                
-        if self.eccentric:
-            self.priors.extend([UP(-0.7, 0.7, 'secw'),   ##  9 - sqrt e cos w
-                                UP(-0.7, 0.7, 'sesw')])  ## 10 - sqrt e sin w
-               
+        mask_q = d.quality == 0
+        mask_f = np.isfinite(flux)
+        mask_o = flux < 1.004
+        mask = mask_f & mask_o
+
+        tid_arr  = np.round((time - tc) / p).astype(np.int)
+        tid_arr -= tid_arr.min()
+        tids     = np.unique(tid_arr)
+
+        phase = p*(fold(time, p, tc, shift=0.5) - 0.5)
+        pmask = np.abs(phase) < 6*0.5*dur
+        phases  = [phase[tid_arr==tt]  for tt in np.unique(tids)]
+        times   = [time[tid_arr==tt]   for tt in np.unique(tids)]
+        fluxes  = [flux[tid_arr==tt]   for tt in np.unique(tids)]
+
+        self.time     = time[pmask&mask].copy()
+        self.flux     = flux[pmask&mask].copy()
+        self.npt      = self.flux.size
+
+        ## Define priors
+        ## -------------
+        self.priors = [NP(     tc,   0.02,   'tc'), ##   0 - Transit centre
+                       NP(      p,   0.01,    'p'), ##   1 - Period
+                       UP( 0.0035, 0.0145,   'k2'), ##   2 - planet-star area ratio
+                       HP(   1.25,   0.45,  'rho', lims=(0.05,15)), ##  3 - Stellar density
+                       UP(      0,   0.99,    'b'), ##   4 - Impact parameter
+                       UP(   1e-4,  15e-4,    'e'), ##   5 - White noise std
+                       NP(    1.0,   0.01,    'c'), ##   6 - Baseline constant
+                       UP(      0,    1.0,   'q1'), ##   7 - limb darkening q1
+                       UP(      0,    1.0,   'q2'), ##   8 - limb darkening q2
+                       UP(   -0.8,    0.8, 'secw'), ##   9 - sqrt(e) cos(w)
+                       UP(   -0.8,    0.8, 'sesw')] ##  10 - sqrt(e) sin(w)
         self.ps = PriorSet(self.priors)
+        self.logg_prior = logg_prior or UP(0, 10, 'logg')
         
-        
+                
     def compute_baseline(self, pv):
-        """Simple constant baseline model"""
-        self._wrk_lc.fill(pv[6])
-        return self._wrk_lc
+        """Constant baseline model"""
+        return pv[6]
 
     
-    def compute_transit(self, pv):
+    def compute_transit(self, pv, times=None):
         """Transit model"""
         _a  = as_from_rhop(pv[3], pv[1])  # Scaled semi-major axis from stellar density and orbital period
         _i  = mt.acos(pv[4]/_a)           # Inclination from impact parameter and semi-major axis
         _k  = mt.sqrt(pv[2])              # Radius ratio from area ratio
         
-        a,b = mt.sqrt(pv[7]), 2*pv[8]
-        self._wrk_ld[:] = a*b, a*(1.-b)   # Quadratic limb darkening coefficients
+        a,b = mt.sqrt(pv[7]), 2*pv[8]     # Mapping the limb darkening coefficients from the Kipping (2014) 
+        _uv = np.array([a*b, a*(1.-b)])   # parameterisation to quadratic MA coefficients
 
-        _e, _w = 0., 0.
-        if self.eccentric:
-            _e = pv[9]**2+pv[10]**2
-            _w = mt.atan2(pv[10], pv[9])
-            
-        return self.tm.evaluate(self.time, _k, self._wrk_ld, pv[0], pv[1], _a, _i, _e, _w)
+        _e = pv[9]**2+pv[10]**2           # Eccentricity
+        _w = mt.atan2(pv[10], pv[9])      # Argument of periastron
+
+        times = self.time if times is None else times
+        return self.tm.evaluate(times, _k, _uv, pv[0], pv[1], _a, _i, _e, _w)
 
     
-    def compute_lc_model(self, pv):
+    def compute_lc_model(self, pv, times=None):
         """Combined baseline and transit model"""
-        return self.compute_baseline(pv) * self.compute_transit(pv)
+        return self.compute_baseline(pv) * self.compute_transit(pv, times)
 
 
     def __call__(self, pv):
@@ -145,4 +156,4 @@ class LPFunction(object):
         if any(pv < self.ps.pmins) or any(pv>self.ps.pmaxs):
             return -inf
         flux_m = self.compute_lc_model(pv)
-        return self.ps.c_log_prior(pv) + ll_normal_es(self.flux_o, flux_m, pv[5]) + self.logg_prior.log(logg(pv[3], 0.43))
+        return self.ps.c_log_prior(pv) + ll_normal_es(self.flux, flux_m, pv[5]) + self.logg_prior.log(logg(pv[3], 0.43))
