@@ -3,21 +3,21 @@ import astropy.io.fits as pf
 import seaborn as sb
 import pandas as pd
 import numpy as np
+import warnings
 
 from os.path import join
-from IPython.display import HTML
 from scipy.ndimage import binary_erosion as be
 
 from pytransit.orbits_f import orbits as of
 from pytransit import MandelAgol as MA
 from pytransit.param.basicparameterization import BasicEccentricParameterization
 
-from exotk.de import DiffEvol
+from pyde import DiffEvol
 from exotk.priors import PriorSet, UP, NP, JP
 from exotk.utils.orbits import as_from_rhop
 from exotk.utils.likelihood import ll_normal_es
 from exotk.utils.misc_f import utilities as uf
-from k2sc.utils import fold
+from exotk.utils.misc import fold
 
 from exotk.constants import rsun
 from scipy.constants import G
@@ -28,21 +28,38 @@ cp = sb.color_palette()
 from matplotlib import rc
 from numpy import *
 
-rc('figure', figsize=(14,6))
+
 N = lambda a: a/nanmedian(a)
 
-sb.set_style('white')
+warnings.filterwarnings("ignore", category=RuntimeWarning)
 random.seed(0)
 
-bjdref           = pf.getval('data/raw/ktwo211916756-c05_llc.fits', 'bjdrefi', 1)
+# Planetary parameters
+# --------------------
+
+bjdref           = pf.getval('../data/raw/ktwo211916756-c05_llc.fits', 'bjdrefi', 1)
 tc_bjd           = 2457150.8786
 zero_epoch = tc  = tc_bjd - bjdref
 period     = p   = 10.1344
 duration   = dur = 0.3
 
+# Stellar parameters
+# ------------------
+
 G_cgs = 6.674e-8
-Rs = 0.43 * rsun
+Rs    = 0.43 * rsun
 logg, logg_e = 4.82, 0.06
+
+# Plotting
+# --------
+AAOCW = 3.4645669
+AAPGW = 7.0866142
+
+rc('figure', figsize=(14,6))
+sb.set_style('white')
+
+# Utility functions
+# -----------------
 
 def T14(p,a,k,I):
     return p/pi*arcsin( (1./a)*sqrt( ((1+k)**2 - (a*cos(I))**2) / (1-cos(I)**2)))
@@ -83,7 +100,7 @@ class LPFunction(object):
         
         ## Import the K2 data
         ## ------------------
-        d  = pf.getdata('data/red/EPIC_211916756_mast.fits', 1)
+        d  = pf.getdata('../data/red/EPIC_211916756_mast.fits', 1)
         time = d.time
         flux_raw = d.flux_1
         trend_t  = d.trend_t_1 - np.nanmedian(d.trend_t_1)
