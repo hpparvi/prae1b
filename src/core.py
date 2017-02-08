@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 import warnings
 
-from os.path import join
+from os.path import join, abspath, dirname
 from scipy.ndimage import binary_erosion as be
 
 from pytransit.orbits_f import orbits as of
@@ -33,6 +33,14 @@ N = lambda a: a/nanmedian(a)
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 random.seed(0)
+
+# Paths
+# -----
+DROOT = dirname(abspath(join(__file__,'..')))
+DDATA = join(DROOT, 'data', 'red')
+DRESULT = join(DROOT, 'results')
+DPLOT = join(DROOT, 'plots')
+LCFILE = join(DDATA, 'EPIC_211916756_mast.fits')
 
 # Planetary parameters
 # --------------------
