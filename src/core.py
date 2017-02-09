@@ -6,33 +6,30 @@ import numpy as np
 import warnings
 
 from os.path import join, abspath, dirname
-from scipy.ndimage import binary_erosion as be
+from numpy import pi, arcsin, sqrt, cos
+from matplotlib import rc
 
-from pytransit.orbits_f import orbits as of
 from pytransit import MandelAgol as MA
 from pytransit.param.basicparameterization import BasicEccentricParameterization
+from pytransit.orbits_f import orbits as of
+from pytransit.utils.orbits import i_from_baew
 
-from pyde import DiffEvol
 from exotk.priors import PriorSet, UP, NP, JP
 from exotk.utils.orbits import as_from_rhop
 from exotk.utils.likelihood import ll_normal_es
-from exotk.utils.misc_f import utilities as uf
 from exotk.utils.misc import fold
 
 from exotk.constants import rsun
 from scipy.constants import G
 
+from pyde import DiffEvol
 from emcee import EnsembleSampler
-cp = sb.color_palette()
-
-from matplotlib import rc
-from numpy import *
-
 
 N = lambda a: a/nanmedian(a)
+cp = sb.color_palette()
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
-random.seed(0)
+np.random.seed(0)
 
 # Paths
 # -----
@@ -69,9 +66,6 @@ sb.set_style('white')
 # Utility functions
 # -----------------
 
-def T14(p,a,k,I):
-    return p/pi*arcsin( (1./a)*sqrt( ((1+k)**2 - (a*cos(I))**2) / (1-cos(I)**2)))
-
 def logg(rho, r):
     """
     Parameters
@@ -83,9 +77,6 @@ def logg(rho, r):
 
 
 class HNPrior(NP):
-    def __call__(self, x, pv=None):
-        return exp(self.log(x))
-
     def log(self, x, pv=None):
         if isinstance(x, np.ndarray):
             return np.select([x <= self.a, (self.a < x) & (x < self.mean), x > self.mean],
@@ -99,7 +90,10 @@ class HNPrior(NP):
                 return self._lf1 -(x-self.mean)**2*self._f2
 
 HP = HNPrior
-            
+
+# Log posterior function
+# ----------------------
+
 class LPFunction(object):
     def __init__(self, nthreads=2, logg_prior=None):
         self.tm = MA(lerp=False, supersampling=10, nthr=nthreads)
@@ -108,7 +102,7 @@ class LPFunction(object):
         
         ## Import the K2 data
         ## ------------------
-        d  = pf.getdata('../data/red/EPIC_211916756_mast.fits', 1)
+        d  = pf.getdata(LCFILE, 1)
         time = d.time
         flux_raw = d.flux_1
         trend_t  = d.trend_t_1 - np.nanmedian(d.trend_t_1)
